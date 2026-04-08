@@ -219,7 +219,6 @@ class PI0Pytorch(nn.Module):
     def sample_time(self, bsize, device):
         if self.l1_flow and hasattr(self, "timestep_sampler"):
             t = self.timestep_sampler.sample(bsize)
-            t = t * 0.999 + 0.001  # Map to [0.001, 1.0]
             return t.to(dtype=torch.float32, device=device)
         time_beta = sample_beta(1.5, 1.0, bsize, device)
         time = time_beta * 0.999 + 0.001
@@ -366,7 +365,12 @@ class PI0Pytorch(nn.Module):
             time = self.sample_time(actions.shape[0], actions.device)
 
         time_expanded = time[:, None, None]
-        x_t = time_expanded * noise + (1 - time_expanded) * actions
+        # L1 Flow: t=0 is noise, t=1 is clean (matches original L1Flow convention)
+        # Standard FM: t=1 is noise, t=0 is clean
+        if self.l1_flow:
+            x_t = time_expanded * actions + (1 - time_expanded) * noise
+        else:
+            x_t = time_expanded * noise + (1 - time_expanded) * actions
         # L1 Flow: predict x1 (sample), not velocity (noise - actions)
         u_t = actions if self.l1_flow else noise - actions
 

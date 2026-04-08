@@ -25,24 +25,28 @@ class MixedTimestepSampler:
     def __init__(self, alpha=0.99):
         self.alpha = alpha
 
+    def __eq__(self, other):
+        return isinstance(other, MixedTimestepSampler) and self.alpha == other.alpha
+
+    def __hash__(self):
+        return hash(("MixedTimestepSampler", self.alpha))
+
     def sample(self, rng, batch_shape):
-        use_logistic = jax.random.uniform(rng, shape=batch_shape) < self.alpha
-        n_logistic = jnp.sum(use_logistic)
-        n_uniform = batch_shape[0] - n_logistic
+        mask_rng, logistic_rng, uniform_rng = jax.random.split(rng, 3)
 
-        t = jnp.zeros(batch_shape)
-        # LogisticNormal: sample from N(0,1), apply sigmoid
-        if n_logistic > 0:
-            logistic_rng, _ = jax.random.split(rng)
-            x = jax.random.normal(logistic_rng, shape=(n_logistic,))
-            t = jnp.where(use_logistic, jax.nn.sigmoid(x), t)
+        # Mask: which samples use LogisticNormal vs Uniform
+        use_logistic = jax.random.uniform(mask_rng, shape=batch_shape) < self.alpha
 
-        # Uniform part
-        if n_uniform > 0:
-            uniform_rng, _ = jax.random.split(rng)
-            t = jnp.where(~use_logistic, jax.random.uniform(uniform_rng, shape=batch_shape), t)
+        # LogisticNormal: sigmoid(N(0,1)) — concentrated around 0.3~0.7
+        x = jax.random.normal(logistic_rng, shape=batch_shape)
+        logistic_t = jax.nn.sigmoid(x)
 
-        return t
+        # Uniform: flat over [0, 1]
+        uniform_t = jax.random.uniform(uniform_rng, shape=batch_shape)
+
+        # Select per-sample
+        t = jnp.where(use_logistic, logistic_t, uniform_t)
+        return t, rng
 
 
 def _get_l1_flow_sampler():
@@ -232,11 +236,15 @@ class Pi0(_model.BaseModel):
         noise = jax.random.normal(noise_rng, actions.shape)
         if self.l1_flow:
             time, _ = self._timestep_sampler.sample(time_rng, batch_shape)
-            time = time * 0.999 + 0.001
         else:
             time = jax.random.beta(time_rng, 1.5, 1, batch_shape) * 0.999 + 0.001
         time_expanded = time[..., None, None]
-        x_t = time_expanded * noise + (1 - time_expanded) * actions
+        # L1 Flow: t=0 is noise, t=1 is clean (matches original L1Flow convention)
+        # Standard FM: t=1 is noise, t=0 is clean
+        if self.l1_flow:
+            x_t = time_expanded * actions + (1 - time_expanded) * noise
+        else:
+            x_t = time_expanded * noise + (1 - time_expanded) * actions
         # L1 Flow: predict x1 (sample), not velocity (noise - actions)
         u_t = actions if self.l1_flow else noise - actions
 
