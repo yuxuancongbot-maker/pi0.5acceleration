@@ -797,7 +797,8 @@ _CONFIGS = [
         freeze_filter=nnx.Not(nnx_utils.PathRegex(".*llm.*_1.*")),
     ),
     #
-    # π0.5 + L1 Flow fine-tuning on LIBERO-Plus
+    # π0.5 + L1 Flow fine-tuning on LIBERO-
+    
     # Same architecture as pi05_libero_l1_flow, but trained on LIBERO-Plus dataset
     # (perturbation-augmented data: varied camera, lighting, backgrounds, etc.)
     #
@@ -810,7 +811,7 @@ _CONFIGS = [
             l1_flow=True,
         ),
         data=LeRobotLiberoDataConfig(
-            repo_id="Sylvest/libero_plus_lerobot",
+            repo_id="data/libero_plus_lerobot",
             base_config=DataConfig(prompt_from_task=True),
             extra_delta_transform=False,
         ),
@@ -840,7 +841,7 @@ _CONFIGS = [
             l1_flow=True,
         ),
         data=LeRobotLiberoDataConfig(
-            repo_id="Sylvest/libero_plus_lerobot",
+            repo_id="data/libero_plus_lerobot",
             base_config=DataConfig(prompt_from_task=True),
             extra_delta_transform=False,
         ),
