@@ -35,15 +35,22 @@ uv pip install wand scikit-image
 ### 2. 数据集下载
 
 ```bash
-# 设置镜像加速
-export HF_ENDPOINT=https://hf-mirror.com
+OPENPI_DIR="/inspire/hdd/project/inference-chip/lijinhao-240108540148/research_yuxuancong/onestep_pi/openpi"
+cd "$OPENPI_DIR"
 
-# 多线程下载
-source .venv/bin/activate
-huggingface-cli download Sylvest/libero_plus_lerobot \
-    --repo-type dataset \
-    --local-dir /root/.cache/huggingface/lerobot/Sylvest/libero_plus_lerobot \
-    --local-dir-use-symlinks False
+# 使用 hf_transfer 加速，带自动重试
+max_retries=20; attempt=0
+while [ $attempt -lt $max_retries ]; do
+    attempt=$((attempt + 1))
+    HF_HUB_ENABLE_HF_TRANSFER=1 \
+    uv run huggingface-cli download \
+        Sylvest/libero_plus_lerobot \
+        --repo-type dataset \
+        --local-dir data/libero_plus_lerobot \
+        --resume-download \
+    && echo "下载完成！" && break
+    sleep 60
+done
 ```
 
 详见 [02_dataset.md](openpi/docs_f1flow/02_dataset.md)
@@ -51,14 +58,32 @@ huggingface-cli download Sylvest/libero_plus_lerobot \
 ### 3. 训练（从本地 checkpoint 微调）
 
 ```bash
-cd openpi
-source .venv/bin/activate
+OPENPI_DIR="/inspire/hdd/project/inference-chip/lijinhao-240108540148/research_yuxuancong/onestep_pi/openpi"
+cd "$OPENPI_DIR"
+
+# HF_LEROBOT_HOME 让 lerobot 在 openpi/data/libero_plus_lerobot 查找数据
+# （config 中 repo_id="data/libero_plus_lerobot"，解析为 HF_LEROBOT_HOME/data/libero_plus_lerobot）
+
+# 安装 FFmpeg（LIBERO-Plus 视频解码必须，仅需执行一次）
+uv pip install av
+
+# 创建标准 soname 符号链接（仅需执行一次）
+cd .venv/lib/python3.11/site-packages/av.libs/
+for f in *.so.*; do
+    soname=$(echo "$f" | sed -E 's/-[0-9a-f]{8}(\.so\.[0-9]+).*/\1/')
+    if [ "$soname" != "$f" ] && [ ! -e "$soname" ]; then ln -sf "$f" "$soname"; fi
+done
+cd "$OPENPI_DIR"
 
 # 计算 norm stats
+HF_LEROBOT_HOME="$OPENPI_DIR" \
 uv run scripts/compute_norm_stats.py --config-name pi05_libero_plus_l1_flow_from_ckpt
 
 # 训练
-XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi05_libero_plus_l1_flow_from_ckpt \
+LD_LIBRARY_PATH="$OPENPI_DIR/.venv/lib/python3.11/site-packages/av.libs:$LD_LIBRARY_PATH" \
+HF_LEROBOT_HOME="$OPENPI_DIR" \
+XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 \
+uv run scripts/train.py pi05_libero_plus_l1_flow_from_ckpt \
     --exp-name=libero_plus_from_ckpt29999 --overwrite
 ```
 
@@ -67,12 +92,15 @@ XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 uv run scripts/train.py pi05_libero_plus_l1_f
 ### 4. 评估
 
 ```bash
-source examples/libero/.venv/bin/activate
-export LIBERO_CONFIG_PATH=/tmp/libero && mkdir -p /tmp/libero
+OPENPI_DIR="/inspire/hdd/project/inference-chip/lijinhao-240108540148/research_yuxuancong/onestep_pi/openpi"
+cd "$OPENPI_DIR"
 
-python examples/libero/main.py \
+export LIBERO_CONFIG_PATH=/tmp/libero && mkdir -p /tmp/libero
+export PYTHONPATH="$OPENPI_DIR/third_party/LIBERO-plus:$OPENPI_DIR/packages/openpi-client/src:$OPENPI_DIR"
+
+examples/libero/.venv/bin/python examples/libero/main.py \
     --policy_model pi05_libero_plus_l1_flow_from_ckpt \
-    --ckpt_path checkpoints/libero_plus_from_ckpt29999/<step>/params \
+    --ckpt_path checkpoints/pi05_libero_plus_l1_flow_from_ckpt/libero_plus_from_ckpt29999/<step>/params \
     --benchmark_name libero_spatial \
     --num_trials_per_task 1
 ```

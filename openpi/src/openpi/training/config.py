@@ -357,6 +357,61 @@ class LeRobotLiberoDataConfig(DataConfigFactory):
 
 
 @dataclasses.dataclass(frozen=True)
+class LeRobotLiberoPlusDataConfig(DataConfigFactory):
+    """
+    Data config for Sylvest/libero_plus_lerobot dataset (LeRobot v2.1 standard format).
+
+    RepackTransform uses {dest_key: source_key} convention.
+    Key differences from LeRobotLiberoDataConfig (physical-intelligence/libero):
+      - action source key:      'action'  (singular)  vs 'actions' (plural)
+      - front image source key: 'observation.images.front' vs 'observation/image'
+      - wrist image source key: 'observation.images.wrist' vs 'observation/wrist_image'
+      - state source key:       'observation.state'   vs 'observation/state'
+    """
+
+    extra_delta_transform: bool = False
+
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        repack_transform = _transforms.Group(
+            inputs=[
+                _transforms.RepackTransform(
+                    {
+                        # {dest_key: source_key} — dest must match what LiberoInputs expects
+                        "observation/image": "observation.images.front",
+                        "observation/wrist_image": "observation.images.wrist",
+                        "observation/state": "observation.state",
+                        "actions": "action",   # libero_plus_lerobot uses 'action' (singular)
+                        "prompt": "prompt",
+                    }
+                )
+            ]
+        )
+
+        data_transforms = _transforms.Group(
+            inputs=[libero_policy.LiberoInputs(model_type=model_config.model_type)],
+            outputs=[libero_policy.LiberoOutputs()],
+        )
+
+        if self.extra_delta_transform:
+            delta_action_mask = _transforms.make_bool_mask(6, -1)
+            data_transforms = data_transforms.push(
+                inputs=[_transforms.DeltaActions(delta_action_mask)],
+                outputs=[_transforms.AbsoluteActions(delta_action_mask)],
+            )
+
+        model_transforms = ModelTransformFactory()(model_config)
+
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            repack_transforms=repack_transform,
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+            action_sequence_keys=("action",),  # lerobot delta_timestamps 用 'action' 键
+        )
+
+
+@dataclasses.dataclass(frozen=True)
 class RLDSDroidDataConfig(DataConfigFactory):
     """
     Config for training on DROID, using RLDS data format (for efficient training on larger datasets).
@@ -810,7 +865,7 @@ _CONFIGS = [
             discrete_state_input=False,
             l1_flow=True,
         ),
-        data=LeRobotLiberoDataConfig(
+        data=LeRobotLiberoPlusDataConfig(
             repo_id="data/libero_plus_lerobot",
             base_config=DataConfig(prompt_from_task=True),
             extra_delta_transform=False,
@@ -840,7 +895,7 @@ _CONFIGS = [
             discrete_state_input=False,
             l1_flow=True,
         ),
-        data=LeRobotLiberoDataConfig(
+        data=LeRobotLiberoPlusDataConfig(
             repo_id="data/libero_plus_lerobot",
             base_config=DataConfig(prompt_from_task=True),
             extra_delta_transform=False,
